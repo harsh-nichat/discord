@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Your Discord Channels</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f6f8fa;
+        }
+        h1 {
+            color: #5865F2;
+            text-align: center;
+            margin-bottom: 20px;
+        }
+        ul {
+            list-style-type: none;
+            padding: 0;
+        }
+        li {
+            background-color: white;
+            margin-bottom: 10px;
+            padding: 10px;
+            border-radius: 5px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+        button {
+            background-color: #7289DA;
+            color: white;
+            border: none;
+            padding: 5px 10px;
+            border-radius: 3px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+            margin: 10px;
+        }
+        button:hover {
+            background-color: #5a6ebd;
+        }
+        input[type="text"], select {
+            padding: 5px;
+            margin-right: 5px;
+            border: 1px solid #ddd;
+            border-radius: 3px;
+        }
+        #uploadStatus {
+            margin-top: 10px;
+            font-weight: bold;
+            color: #43B581;
+        }
+        #refreshChannels {
+            display: block;
+            margin: 20px auto;
+            background-color: #43B581;
+        }
+        #refreshChannels:hover {
+            background-color: #3ca374;
+        }
+    </style>
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="/js/upload.js" defer></script>
+</head>
+<body>
+    <h1>Welcome, <span id="userName"></span>!</h1>
+    <img id="userAvatar" src="" alt="User Avatar" style="width: 50px; height: 50px; border-radius: 50%;">
+    <h2>Your Discord Channels:</h2>
+    <ul id="channelList"></ul>
+    <div>
+        <button id="refreshChannels">Refresh Channels</button>
+    </div>
+    <form id="createChannelForm">
+        <input type="text" id="channelName" placeholder="New channel name" required>
+        <button type="submit">Create Channel</button>
+    </form>
+
+    <form id="uploadForm" enctype="multipart/form-data">
+        <select id="channelSelect"></select>
+        <input type="file" id="fileInput" name="files" multiple>
+        <span id="fileCount"></span>
+        <button id="uploadButton">Upload</button>
+        <div id="uploadStatus"></div>
+    </form>
+
+    <div id="uploadProgress" style="display: none;">
+        Files uploaded: <span id="uploadedCount">0</span> / <span id="totalFiles">0</span>
+    </div>
+
+    <script>
+        function fetchDashboardData() {
+            fetch('/api/dashboard-data')
+                .then(response => response.json())
+                .then(data => {
+                    console.log('Received dashboard data:', data);
+                    document.getElementById('userName').textContent = data.user.name;
+                    document.getElementById('userAvatar').src = data.user.picture;
+
+                    const channelList = document.getElementById('channelList');
+                    channelList.innerHTML = '';
+                    data.channels.forEach(channel => {
+                        console.log(`Channel: ${channel.name}`, channel);
+                        const li = document.createElement('li');
+                        li.textContent = `${channel.name} (${channel.files ? channel.files.length : 0} files)`;
+                        
+                        if (channel.error) {
+                            li.textContent += ` - Error: ${channel.error}`;
+                            li.style.color = 'red';
+                        } else {
+                            const downloadBtn = document.createElement('button');
+                            downloadBtn.textContent = `Download Files`;
+                            downloadBtn.classList.add('download-btn');
+                            downloadBtn.onclick = () => downloadChannelFiles(channel.id);
+                            li.appendChild(downloadBtn);
+                        }
+                        
+                        channelList.appendChild(li);
+                    });
+
+                    populateChannelSelect(data.channels);
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    alert('Failed to fetch dashboard data: ' + error.message);
+                });
+        }
+
+        function downloadChannelFiles(channelId) {
+            window.location.href = `/download-channel/${channelId}`;
+        }
+
+        function populateChannelSelect(channels) {
+            const select = document.getElementById('channelSelect');
+            select.innerHTML = '';
+            channels.forEach(channel => {
+                const option = document.createElement('option');
+                option.value = channel.id;
+                option.textContent = channel.name;
+                select.appendChild(option);
+            });
+        }
+
+        async function uploadFiles(event) {
+    event.preventDefault();
+    const channelId = document.getElementById('channelSelect').value;
+    const files = document.getElementById('fileInput').files;
+    const formData = new FormData();
+    const statusDiv = document.getElementById('uploadStatus');
+    const totalFiles = files.length;
+
+    for (let file of files) {
+        formData.append('files', file);
+    }
+    formData.append('channelId', channelId);
+
+    statusDiv.textContent = `Files uploaded: 0 / ${totalFiles}`;
+
+    console.log('Uploading files:', { channelId, fileCount: files.length });
+    console.log('Posting to:', '/upload');
+
+    try {
+        const response = await fetch('/upload', {
+            method: 'POST',
+            body: formData
+        });
+
+        if (response.ok) {
+            const reader = response.body.getReader();
+            let uploadedCount = 0;
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+
+                const text = new TextDecoder().decode(value);
+                const match = text.match(/uploaded:(\d+)/);
+                if (match) {
+                    uploadedCount = parseInt(match[1], 10);
+                    statusDiv.textContent = `Files uploaded: ${uploadedCount} / ${totalFiles}`;
+                }
+            }
+
+            statusDiv.textContent = `Upload complete. ${uploadedCount} out of ${totalFiles} files uploaded successfully.`;
+        } else {
+            throw new Error('Upload failed');
+        }
+    } catch (error) {
+        console.error('Error:', error);
+        alert('Failed to upload files: ' + error.message);
+    }
+}
+
+        document.getElementById('uploadForm').addEventListener('submit', uploadFiles);
+
+        // Initial fetch
+        fetchDashboardData();
+
+        // Refresh channels
+        document.getElementById('refreshChannels').addEventListener('click', fetchDashboardData);
+
+        // Handle channel creation
+        document.getElementById('createChannelForm').addEventListener('submit', (e) => {
+            e.preventDefault();
+            const channelName = document.getElementById('channelName').value;
+            fetch('/create-folder', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ folderName: channelName })
+            })
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error('Network response was not ok');
+                }
+                return response.json();
+            })
+            .then(data => {
+                if (data.success) {
+                    document.getElementById('channelName').value = '';
+                    fetchDashboardData(); // Refresh the channel list
+                } else {
+                    throw new Error(data.error || 'Unknown error occurred');
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('Failed to create channel: ' + error.message);
+            });
+        });
+    </script>
+</body>
+</html>
